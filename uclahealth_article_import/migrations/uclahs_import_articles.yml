@@ -1,0 +1,152 @@
+# https://www.drupal.org/docs/8/api/migrate-api/migrate-api-overview
+# Follows ETL
+# original setup and guide from https://ohthehugemanatee.org/blog/2017/06/07/stop-waiting-for-feeds-module-how-to-import-remote-feeds-in-drupal-8/
+# this is for rss feed 
+# first three are required
+# name of the process to be called in drush mim 
+id: ucla_article_importer
+# human friendly label
+label: 'Import UCLA Articles'
+# need to ensure the migration is enabled
+status: true
+
+# have to identify where the content is coming from
+# url has two settings http and file - using http in this case
+# url http can read json, soap, xml - in this case use simple_xml is the easiest
+# xml ignores data fetching - processes its own - if have large xml file use xml for better process
+# most rss/xml will not need this
+# https://www.drupal.org/docs/8/api/migrate-api/migrate-source-plugins
+source:
+  plugin: url
+  data_fetcher_plugin: http
+  # test case to pull daily articles from ucla newsroom
+  # change this value to the feed you want to consume
+  urls: 'http://newsroom.ucla.edu/rss.xml'
+  data_parser_plugin: simple_xml
+
+  # as we discovered in the class your migration requires more than one item - hack needed and not recommended if only one
+  # in theis example the items we want to grab are listed at /rss/channel/item
+  # eg (
+  # <rss version="2.0">
+  #  <channel>
+  #   <title>UCLA</title>
+  #   <link>http://newsroom.ucla.edu</link>
+  #   <description>UCLA Newsroom feed</description>
+  #   <language>en-us</language>
+  #   <pubDate>Thu, 14 Nov 2019 16:06:03 GMT</pubDate>
+  #   <lastBuildDate>Thu, 14 Nov 2019 16:06:03 GMT</lastBuildDate>
+  #   <generator>iPressroom</generator>
+  #   <item>
+  #     <title>UCLA In the News November 14, 2019</title>
+  #     <link>http://newsroom.ucla.edu/in-the-news/ucla-in-the-news-november-14-2019</link>
+  #     <contentType>news</contentType>
+  #     <description><![CDATA[Highlights from Washington Post, Bloomberg, NBC News and others. ]]></description>
+  #     <guid isPermaLink="true">http://newsroom.ucla.edu/in-the-news/ucla-in-the-news-november-14-2019</guid>
+  #     <pubDate>Thu, 14 Nov 2019 14:00:00 GMT</pubDate>
+  #   </item>
+  #   . . . 
+  #   </channel>
+  #   </rss>
+  #)
+  #
+  item_selector: /rss/channel/item
+  # notice that we are not grabbing all of the items - only list the fields that you want to grab
+  # name = selector for processing in the yml file
+  # label = human friendly label
+  # selector = selector from source
+  fields:
+    -
+      name: guid
+      label: GUID
+      selector: guid
+    -
+      name: title
+      label: Title
+      selector: title
+    -
+      name: pub_date
+      label: 'Publication date'
+      selector: pubDate
+    -
+      name: link
+      label: 'Origin link'
+      selector: link
+    -
+      name: description
+      label: Description
+      selector: description
+    -
+      name: author
+      label: Author
+      selector: author
+
+  # unique id needed for item in database - will not show through gui 
+  ids:
+    guid:
+      type: string
+
+# define where this is going to in your Drupal instance
+# https://www.drupal.org/docs/8/api/migrate-api/migrate-destination-plugins-examples
+destination:
+  plugin: 'entity:node'
+
+# https://www.drupal.org/docs/8/api/migrate-api/migrate-process-plugins
+# mapping of source to destination in Drupal
+# plugin is usually default_value
+process:
+  # recommend uid - consider required
+  # if you have a user mapping this is where it will be associated
+  # if you are migrating users refert to drupal destination for clue
+  uid:
+    plugin: default_value
+    default_value: 1
+  # is this published or not
+  # change to 0 for unpublished
+  # can run conditional using logic if needed (ie if source has a status - if status is not published map to 0 etc)
+  status:
+    plugin: default_value
+    default_value: 1
+  # define the node where this is going - use Drupal properties for the node (refrenced sometiems as a bundle)
+  type:
+    plugin: default_value
+    default_value: sf_article
+  # psudeo field specific to this use case 
+  # note needed to write a separate process to manipulate custom html code to be put in body
+  # plugin name uses  the @MigrateProcessPlugin id found in the migrate > process folder uclahs_import_articles.yml
+  link:
+    plugin: uclahs_articles
+    source: link
+  # destination article has a body field - we are taking 3 fields from source and stuffing them into one
+  # using pluging concat for concatanation 
+  # the link is from the psuedo field above using @link or whatever you may call a new psuedo field
+  # will be displayed in the order you list below
+  # protip - say you need to change this after your initial import
+  # run drush mim --update <id>
+  body/value:
+    plugin: concat
+    source:
+      - description
+      - '@link'
+      - author
+  # destination on this particular field needs additional formatting to tell field how to render html
+  # in sitefarm this is sf_basic_html
+  body/format:
+    plugin: default_value
+    default_value: sf_basic_html
+  # article bundle - title
+  title: title
+  # article bundle - created date unix time stamp - using a callback for basic php string to time
+  # alternative way of doing this - lucky in this case that we have a timezone
+  # U indicates unix timestamp for drupal
+  #   created:
+  #  plugin: format_date
+  #  from_format: 'Dy, DD Mon YYYY HH24:MM:SS TZ'
+  #  to_format: 'U'
+  #  source: pub_date
+  created: 
+    plugin: callback
+    callable: strtotime
+    source: pub_date
+
+
+
